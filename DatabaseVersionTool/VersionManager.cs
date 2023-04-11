@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Data.SqlClient;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -22,23 +23,54 @@ internal class VersionManager
     {
         var output = new List<string>();
 
-        // Get current DB version
         var version = GetCurrentVersion();
         output.Add($"Current DB version is {version}");
 
-        // Find new migrations
         var migrations = GetNewMigrations(version);
         output.Add($"{migrations.Count} migrations found");
 
-        // Evecute new migrations
-        foreach (var migration in migrations )
+        var duplicatedVersion = GetDuplicatedVersion(migrations);
+        if (duplicatedVersion != null)
+        {
+            output.Add($"Non-unique migration found: {duplicatedVersion}");
+            return output;
+        }
+
+        foreach (var migration in migrations)
         {
             _dbHelper.ExecuteMigration(migration.GetContent());
             UpdateVersion(migration.Version);
             output.Add($"Executed migration {migration.Name}");
         }
 
+        if (!migrations.Any())
+        {
+            output.Add("No new updates were found");
+        }
+        else
+        {
+            var newVersion = migrations.Last().Version;
+            output.Add($"New database version {newVersion}");
+        }
+
         return output;
+    }
+
+    private int? GetDuplicatedVersion(IReadOnlyList<Migration> migrations)
+    {
+        var duplicated = migrations
+            .GroupBy(x => x.Version)
+            .Where(x => x.Count() > 1)
+            .Select(x => x.Key)
+            .FirstOrDefault();
+
+        return duplicated == 0 ? null : duplicated;
+    }
+
+    private void UpdateVersion(int version)
+    {
+        var query = @"UPDATE dbo.Settings SET Value = @Version WHERE Name = 'Version'";
+        _dbHelper.ExecuteNonQuery(query, new SqlParameter("Version", version.ToString()));
     }
 
     private IReadOnlyList<Migration> GetNewMigrations(int version)
